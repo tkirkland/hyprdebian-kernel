@@ -14,7 +14,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends git ca-certificates \
   build-essential bc flex bison libssl-dev libelf-dev debhelper rsync cpio \
-  kmod python3 autoconf automake libtool gettext pkg-config uuid-dev \
+  kmod python3 libdw-dev autoconf automake libtool gettext pkg-config uuid-dev \
   libblkid-dev libtirpc-dev zlib1g-dev libaio-dev libattr1-dev libudev-dev >/dev/null
 
 git clone -q --depth 1 --branch "$KTAG" \
