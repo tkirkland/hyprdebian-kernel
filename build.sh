@@ -58,7 +58,15 @@ cp -v "$W"/linux-{image,headers}-*"$LOCALVERSION"_*.deb "$OUT"/
 cd "$ZSRC"
 make distclean >/dev/null 2>&1 || true
 # Every path pinned under /usr: the target rootfs is merged-usr.
+# --enable-systemd / --disable-sysvinit: configure decides systemd support by
+# running `systemctl --version` on the BUILD machine, and this runs in a bare
+# debian:trixie container that has no systemctl. So every tarball shipped only
+# /etc/init.d/zfs-* and none of zfs-mount.service, zfs-import-cache.service,
+# zfs.target or the mount generator; the target (systemd PID 1) never mounted
+# any dataset but root, and a split layout booted with /home unmounted.
+# SysV scripts off so systemd sees one set of units, not wrappers beside them.
 ./configure --with-config=user --prefix=/usr --sysconfdir=/etc \
+  --enable-systemd --disable-sysvinit \
   --with-udevdir=/usr/lib/udev --with-udevruledir=/usr/lib/udev/rules.d \
   --with-mounthelperdir=/usr/sbin \
   --with-systemdunitdir=/usr/lib/systemd/system \
