@@ -36,11 +36,11 @@ jobs:
       - name: Build ${{ matrix.rel }}
         run: |
           docker run --rm -v "$PWD:/src" debian:trixie \
-            /src/build.sh "${{ matrix.ktag }}" "${{ needs.plan.outputs.zfs }}" /src/out
+            /src/build.sh "${{ matrix.dver }}" "${{ needs.plan.outputs.zfs }}" /src/out
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ matrix.rel }}" out/* \
-            --title "Linux ${{ matrix.ktag }} + ${{ needs.plan.outputs.zfs }} (builtin)" \
-            --notes "Kernel ${{ matrix.ktag }} with OpenZFS ${{ needs.plan.outputs.zfs }} compiled in (CONFIG_ZFS=y), image + headers debs, and the matching ZFS userland tarball."
+            --title "Linux ${{ matrix.dver }} (Debian) + ${{ needs.plan.outputs.zfs }} (builtin)" \
+            --notes "Debian's kernel ${{ matrix.dver }} (built from Debian source package linux ${{ matrix.dver }} with its own amd64 config) with OpenZFS ${{ needs.plan.outputs.zfs }} compiled in (CONFIG_ZFS=y), image + headers debs, and the matching ZFS userland tarball."

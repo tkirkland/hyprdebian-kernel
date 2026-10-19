@@ -1,35 +1,67 @@
 #!/bin/bash
-# Build one stable kernel with OpenZFS compiled BUILTIN (CONFIG_ZFS=y — no
-# module, no dkms) as image+headers debs, plus the matching ZFS userland
-# tarball from the SAME zfs tree. Mirrors debian13-stripped/build-kernel.sh.
+# Build Debian's kernel from Debian's own source package (the .dsc, unpacked
+# with dpkg-source: the exact patched tree Debian builds from, configured with
+# that package's own amd64 config) with OpenZFS compiled BUILTIN (CONFIG_ZFS=y
+# — no module, no dkms) as image+headers debs, plus the matching ZFS userland
+# tarball from the SAME zfs tree.
 # Runs as root inside a throwaway debian:trixie container, never on a host.
-# Usage: build.sh <kernel tag, e.g. v6.12.111> <zfs tag> <outdir>
+# Usage: build.sh <Debian version, e.g. 6.12.113-1> <zfs tag> <outdir>
 set -euo pipefail
-KTAG=$1 ZFS_TAG=$2 OUT=$3
+DVER=$1 ZFS_TAG=$2 OUT=$3
 LOCALVERSION=-stripped
-W=/build KSRC=/build/linux ZSRC=/build/zfs
+W=/build KSRC=/build/linux ZSRC=/build/zfs DPKG=/build/debian-pkg
 mkdir -p "$W" "$OUT"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends git ca-certificates \
+apt-get install -y -qq --no-install-recommends git ca-certificates curl \
   build-essential bc flex bison libssl-dev libelf-dev debhelper rsync cpio \
-  kmod python3 libdw-dev zstd xz-utils autoconf automake libtool gettext pkg-config uuid-dev \
+  kmod python3 python3-dacite libdw-dev zstd xz-utils autoconf automake libtool gettext pkg-config uuid-dev \
   libblkid-dev libtirpc-dev zlib1g-dev libaio-dev libattr1-dev libudev-dev >/dev/null
 
-git clone -q --depth 1 --branch "$KTAG" \
-  https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git "$KSRC"
 git clone -q --depth 1 --branch "$ZFS_TAG" https://github.com/openzfs/zfs.git "$ZSRC"
 
-# --- config seed: Debian's own amd64 kernel config (the real image package
-# behind the linux-image-amd64 metapackage), unpacked, not installed ---------
-cd "$W"
-img=$(apt-cache depends linux-image-amd64 | awk '/Depends: linux-image-[0-9]/{print $2; exit}')
-apt-get download -qq "$img"
-dpkg -x "${img}"_*.deb seed
+# --- Debian's source package -------------------------------------------------
+# Current versions sit in the main or security pool; anything older only on
+# snapshot.debian.org. dpkg-source checks every file against the .dsc
+# checksums (the signature it can only warn about: no keyring in here).
+mkdir -p "$W/src" && cd "$W/src"
+POOLS="https://deb.debian.org/debian/pool/main/l/linux
+https://security.debian.org/debian-security/pool/updates/main/l/linux"
+fetch() { local b; for b in $POOLS; do curl -fsSLO "$b/$1" 2>/dev/null && return; done; return 1; }
+dsc=linux_$DVER.dsc
+if fetch "$dsc"; then
+  for f in $(awk '/^Files:/{f=1; next} /^[^ ]/{f=0} f{print $3}' "$dsc"); do
+    fetch "$f" || { echo "cannot fetch $f" >&2; exit 1; }
+  done
+else
+  curl -fsSL "https://snapshot.debian.org/mr/package/linux/$DVER/srcfiles?fileinfo=1" |
+    python3 -c 'import json, sys
+for h, info in json.load(sys.stdin)["fileinfo"].items(): print(h, info[0]["name"])' |
+    while read -r hash name; do
+      curl -fsSL --retry 3 -o "$name" "https://snapshot.debian.org/file/$hash"
+    done
+fi
+[[ -f $dsc ]] || { echo "Debian source linux $DVER not found" >&2; exit 1; }
+dpkg-source -x "$dsc" "$KSRC"
 cd "$KSRC"
-cp "$W"/seed/boot/config-* .config
-# Debian's config points at Debian's signing certs — clear or the build dies.
+
+# --- config: the tag's own amd64 flavour config, merged the way Debian's
+# rules.real does it (kconfig.py over the fragment list gencontrol uses) ------
+# bindeb-pkg writes its own ./debian, so Debian's packaging moves aside first.
+mv debian "$DPKG"; rm -rf .pc
+export PYTHONPATH=$DPKG/lib/python
+frags=()
+for c in $(python3 -m debian_linux.config_v2 "$DPKG/config" |
+  awk '/Debianarch:/{a=$2} /Featureset:/{f=$2} /Flavour:/{fl=$2}
+    /Config:/ && a=="amd64" && f=="none" && fl=="amd64"{$1=""; print}'); do
+  [[ -f $DPKG/config/$c ]] && frags+=("$DPKG/config/$c")
+done
+(( ${#frags[@]} )) || { echo "no amd64 config fragments in linux $DVER" >&2; exit 1; }
+python3 "$DPKG/bin/kconfig.py" .config "${frags[@]}"
+# Clear any Debian signing cert references. The module signing key is the
+# kernel's auto-generated throwaway one, as in Debian's own build: it signs the
+# in-tree modules and dies with this container (checked below).
 scripts/config --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS ""
 scripts/config --disable DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT --disable DEBUG_INFO_DWARF5 \
   --disable DEBUG_INFO_BTF --enable DEBUG_INFO_NONE
@@ -45,14 +77,23 @@ sh autogen.sh
 
 # --- kernel debs -------------------------------------------------------------
 cd "$KSRC"
-scripts/config --enable ZFS
+# Lockdown under Secure Boot is a Debian patch; the config must keep it on.
+scripts/config --enable ZFS --enable LOCK_DOWN_IN_EFI_SECURE_BOOT
 make olddefconfig
-grep -q '^CONFIG_ZFS=y' .config || { echo "CONFIG_ZFS=y did not stick" >&2; exit 1; }
-# Package version carries the zfs release, so rebuilding the same kernel
-# against a newer zfs still upgrades (e.g. 6.12.111-zfs2.4.5 > 6.12.111-zfs2.4.4).
+for opt in ZFS LOCK_DOWN_IN_EFI_SECURE_BOOT; do
+  grep -q "^CONFIG_$opt=y" .config || { echo "CONFIG_$opt=y did not stick" >&2; exit 1; }
+done
+# Package version carries the Debian revision and the zfs release, so a new
+# Debian revision or a newer zfs on the same kernel still upgrades
+# (6.12.113-2-zfs2.4.4 > 6.12.113-1-zfs2.4.5 > 6.12.113-1-zfs2.4.4).
 make -j"$(nproc)" LOCALVERSION="$LOCALVERSION" \
-  KDEB_PKGVERSION="${KTAG#v}-zfs${ZFS_TAG#zfs-}" bindeb-pkg
-cp -v "$W"/linux-{image,headers}-*"$LOCALVERSION"_*.deb "$OUT"/
+  KDEB_PKGVERSION="${DVER}-zfs${ZFS_TAG#zfs-}" bindeb-pkg
+for deb in "$W"/linux-{image,headers}-*"$LOCALVERSION"_*.deb; do
+  if dpkg-deb -c "$deb" | grep -q 'signing_key\.pem'; then
+    echo "$deb carries the module signing key" >&2; exit 1
+  fi
+  cp -v "$deb" "$OUT"/
+done
 
 # --- matching userland (tools only, no module) -------------------------------
 cd "$ZSRC"
