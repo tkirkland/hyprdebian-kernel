@@ -44,22 +44,9 @@ jobs:
           gh release create "${{ matrix.rel }}" out/* \
             --title "Linux ${{ matrix.dver }} (Debian) + ${{ needs.plan.outputs.zfs }} (builtin)" \
             --notes "Debian's kernel ${{ matrix.dver }} (built from Debian source package linux ${{ matrix.dver }} with its own amd64 config) with OpenZFS ${{ needs.plan.outputs.zfs }} compiled in (CONFIG_ZFS=y), image + headers debs, and the matching ZFS userland tarball."
-      # Keep one release per line. Runs only after Publish succeeded, and only
-      # once the new release lists every built file, so a failed build never
-      # leaves a line with no release.
-      - name: Prune older ${{ matrix.dver }} line releases
+      # Keep current + previous release of this variant; prune.sh refuses
+      # unless every built file is uploaded, so a failed build never prunes.
+      - name: Prune older ${{ matrix.rel }} variant releases
         env:
           GH_TOKEN: ${{ github.token }}
-          REL: ${{ matrix.rel }}
-          DVER: ${{ matrix.dver }}
-        run: |
-          want=$(ls out | wc -l)
-          have=$(gh release view "$REL" --json assets -q '.assets | map(select(.state == "uploaded")) | length')
-          [ "$have" -eq "$want" ] || { echo "$REL has $have/$want assets, not pruning" >&2; exit 1; }
-          case $DVER in 6.12[.-]*) line='^6\.12[.-]' ;; 7.*) line='^7\.' ;; *) echo "unknown line $DVER" >&2; exit 1 ;; esac
-          gh release list --limit 200 --json tagName -q '.[].tagName' |
-            grep -E "$line" | grep -- '-zfs-' | grep -vxF "$REL" |
-            while read -r old; do
-              echo "deleting $old"
-              gh release delete "$old" --cleanup-tag -y
-            done
+        run: ./prune.sh "${{ matrix.rel }}" "$(ls out | wc -l)"

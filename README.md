@@ -43,10 +43,15 @@ archive's source indices and picks:
 Only plain revisions (`6.12.113-1`) count. A version that already has a
 release is skipped.
 
-The repo keeps one release per line. Once a new release has all its assets
-uploaded, the workflow deletes every other release of that line along with its
-git tag. A failed build never prunes anything, so a line always has at least
-one release.
+The repo keeps the newest two releases of each variant: current plus previous,
+so there's always something to roll back to. A variant is the kernel's major
+version plus any word label in the tag, regardless of the other version
+numbers: `6.12.113-1-zfs-2.4.4` is `6`, `7.2.11-1-zfs-2.4.4` is `7`, and a tag
+like `7.2.11-cachyos-zfs-2.4.4` would be `7-cachyos`. Within a variant,
+releases are ordered by version (a missing Debian revision counts as `-0`).
+Once a new release has all its assets uploaded, `prune.sh` deletes the older
+ones along with their git tags. A failed build never prunes anything.
+`KEEP=<n>` changes the count.
 
 **Lag.** A kernel.org point release shows up here only after Debian has
 uploaded it (trixie gets 6.12 updates through trixie-security and point
