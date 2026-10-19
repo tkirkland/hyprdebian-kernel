@@ -43,6 +43,11 @@ archive's source indices and picks:
 Only plain revisions (`6.12.113-1`) count. A version that already has a
 release is skipped.
 
+The repo keeps one release per line. Once a new release has all its assets
+uploaded, the workflow deletes every other release of that line along with its
+git tag. A failed build never prunes anything, so a line always has at least
+one release.
+
 **Lag.** A kernel.org point release shows up here only after Debian has
 uploaded it (trixie gets 6.12 updates through trixie-security and point
 releases), usually days and sometimes weeks later. Debian may skip some point releases
