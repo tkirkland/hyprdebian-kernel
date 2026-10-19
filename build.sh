@@ -31,7 +31,7 @@ cd "$KSRC"
 cp "$W"/seed/boot/config-* .config
 # Debian's config points at Debian's signing certs — clear or the build dies.
 scripts/config --set-str SYSTEM_TRUSTED_KEYS "" --set-str SYSTEM_REVOCATION_KEYS ""
-scripts/config --disable DEBUG_INFO --disable DEBUG_INFO_DWARF5 \
+scripts/config --disable DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT --disable DEBUG_INFO_DWARF5 \
   --disable DEBUG_INFO_BTF --enable DEBUG_INFO_NONE
 scripts/config --set-str LOCALVERSION "" --disable LOCALVERSION_AUTO
 make olddefconfig
